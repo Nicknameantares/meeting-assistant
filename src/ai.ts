@@ -1,6 +1,12 @@
 import { initLlama } from 'llama.rn';
 import { initWhisper } from 'whisper.rn';
-import { ModelInfo, modelPath } from './models';
+import { ModelInfo, resolveModelPath } from './models';
+
+async function requirePath(m: ModelInfo) {
+  const path = await resolveModelPath(m);
+  if (!path) throw new Error(`Модель «${m.name}» не установлена`);
+  return path;
+}
 
 /** Speech to text on the phone with whisper.cpp. The audio is a 16 kHz mono WAV. */
 export async function transcribe(
@@ -9,7 +15,7 @@ export async function transcribe(
   language: 'ru' | 'auto',
   onProgress: (percent: number) => void,
 ): Promise<string> {
-  const ctx = await initWhisper({ filePath: modelPath(model) });
+  const ctx = await initWhisper({ filePath: await requirePath(model) });
   try {
     const { promise } = ctx.transcribe(audioPath, {
       language,
@@ -78,7 +84,7 @@ export async function summarize(
 ): Promise<string> {
   onProgress('Загрузка модели…');
   const ctx = await initLlama({
-    model: modelPath(model),
+    model: await requirePath(model),
     n_ctx: N_CTX,
     n_threads: 4,
     n_gpu_layers: 0,
@@ -95,6 +101,7 @@ export async function summarize(
       temperature: 0.3,
       top_p: 0.9,
       enable_thinking: false,
+      jinja: true,
     });
     return (res.content || res.text).trim();
   };

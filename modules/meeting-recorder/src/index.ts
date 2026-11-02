@@ -28,3 +28,25 @@ export function stopRecording() {
 export function getRecorderStatus(): RecorderStatus {
   return Native.getStatus();
 }
+
+export type DownloadStatus = {
+  status: 'pending' | 'running' | 'paused' | 'done' | 'failed' | 'missing';
+  bytes?: number;
+  total?: number;
+  reason?: number;
+};
+
+type NativeModelFiles = {
+  getModelsDir(): string;
+  getTotalRamBytes(): number;
+  getFreeBytes(): number;
+  fileSize(path: string): number;
+  deleteFile(path: string): boolean;
+  startDownload(url: string, fileName: string, title: string): string;
+  getDownload(id: string, fileName: string): DownloadStatus;
+  cancelDownload(id: string, fileName: string): void;
+  importFromUri(uri: string, fileName: string): Promise<number>;
+};
+
+/** Model storage and downloads through the Android DownloadManager. */
+export const ModelFiles = requireNativeModule<NativeModelFiles>('ModelFiles');

@@ -12,7 +12,10 @@
 2. Перекиньте APK на телефон и установите (разрешите установку из неизвестных источников).
 3. В приложении нажмите **Модели** и скачайте по Wi‑Fi:
    - Whisper Small (~190 МБ) для расшифровки;
-   - Qwen3 4B Instruct (~2,5 ГБ) для резюме, или Qwen2.5 1.5B (~1,1 ГБ) для телефонов с 4 ГБ ОЗУ.
+   - Qwen3 4B Instruct (~2,5 ГБ) для резюме, или Qwen2.5 1.5B (~1,1 ГБ) для телефонов с 4 ГБ ОЗУ,
+     или GigaChat 3.1 Lightning (~6,5 ГБ) для телефонов с 12 ГБ ОЗУ и больше.
+
+   Загрузка идёт через системный загрузчик Android: в фоне, с докачкой после обрыва связи.
 
 ### Модели без интернета на телефоне
 
@@ -25,6 +28,7 @@
 | Whisper Large v3 Turbo | https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin |
 | Qwen3 4B Instruct | https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf |
 | Qwen2.5 1.5B Instruct | https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf |
+| GigaChat 3.1 Lightning (6,5 ГБ, телефон с 12 ГБ ОЗУ) | https://huggingface.co/ai-sage/GigaChat3.1-10B-A1.8B-GGUF/resolve/main/GigaChat3.1-10B-A1.8B-q4_K_M.gguf |
 
 ## Как пользоваться
 

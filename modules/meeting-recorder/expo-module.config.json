@@ -1,6 +1,11 @@
 {
-  "platforms": ["android"],
+  "platforms": [
+    "android"
+  ],
   "android": {
-    "modules": ["expo.modules.meetingrecorder.MeetingRecorderModule"]
+    "modules": [
+      "expo.modules.meetingrecorder.MeetingRecorderModule",
+      "expo.modules.meetingrecorder.ModelFilesModule"
+    ]
   }
 }

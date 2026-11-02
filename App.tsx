@@ -1,7 +1,7 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as FS from 'expo-file-system/legacy';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AppState,
@@ -21,7 +21,18 @@ import {
 } from 'react-native';
 import { getRecorderStatus, startRecording, stopRecording } from './modules/meeting-recorder/src';
 import { summarize, transcribe } from './src/ai';
-import { MODELS, ModelInfo, deleteModel, downloadModel, getModel, importModel, isModelReady } from './src/models';
+import {
+  MODELS,
+  ModelInfo,
+  cancelDownload,
+  deleteModel,
+  downloadModel,
+  getModel,
+  importModel,
+  isModelReady,
+  pendingDownloads,
+  totalRamGb,
+} from './src/models';
 import {
   DEFAULT_SETTINGS,
   Meeting,
@@ -462,38 +473,61 @@ function SummaryView({ text, onChange }: { text: string; onChange: (text: string
 function ModelsScreen(props: { settings: Settings; onChange: (p: Partial<Settings>) => void; onBack: () => void }) {
   const { settings } = props;
   const [ready, setReady] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState<Record<string, { fraction: number; waiting?: boolean; copying?: boolean }>>({});
+  const ramGb = useMemo(() => totalRamGb(), []);
 
   const refresh = useCallback(async () => {
     const entries = await Promise.all(MODELS.map(async (m) => [m.id, await isModelReady(m)] as const));
     setReady(Object.fromEntries(entries));
   }, []);
+
+  const clearLoading = (id: string) => setLoading(({ [id]: _, ...rest }) => rest);
+
+  const download = useCallback(
+    async (m: ModelInfo) => {
+      setLoading((l) => ({ ...l, [m.id]: { fraction: 0, waiting: true } }));
+      try {
+        await downloadModel(m, (p) => setLoading((l) => ({ ...l, [m.id]: p })));
+      } catch (e: any) {
+        Alert.alert('Ошибка загрузки', String(e?.message ?? e));
+      } finally {
+        clearLoading(m.id);
+        refresh();
+      }
+    },
+    [refresh],
+  );
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    // Downloads keep going while the app is closed; pick them up again here.
+    pendingDownloads().then((ids) => ids.forEach((id) => download(getModel(id))));
+  }, [refresh, download]);
 
-  const download = async (m: ModelInfo) => {
-    setLoading((l) => ({ ...l, [m.id]: 0 }));
-    await activateKeepAwakeAsync('download');
-    try {
-      await downloadModel(m, (f) => setLoading((l) => ({ ...l, [m.id]: f })));
-    } catch (e: any) {
-      Alert.alert('Ошибка загрузки', String(e?.message ?? e));
-    } finally {
-      deactivateKeepAwake('download');
-      setLoading(({ [m.id]: _, ...rest }) => rest);
-      refresh();
+  const startDownload = (m: ModelInfo) => {
+    if (m.minRamGb && ramGb < m.minRamGb) {
+      Alert.alert(
+        'Может не хватить памяти',
+        `В телефоне ${ramGb.toFixed(1)} ГБ ОЗУ, а для «${m.name}» нужно около ${m.minRamGb + 1} ГБ. ` +
+          'Модель может не запуститься или приложение будет закрываться при составлении резюме.',
+        [
+          { text: 'Отмена', style: 'cancel' },
+          { text: 'Всё равно скачать', onPress: () => download(m) },
+        ],
+      );
+      return;
     }
+    download(m);
   };
 
   const importFile = async (m: ModelInfo) => {
-    setLoading((l) => ({ ...l, [m.id]: -1 }));
+    setLoading((l) => ({ ...l, [m.id]: { fraction: 0, copying: true } }));
     try {
       await importModel(m);
     } catch (e: any) {
       Alert.alert('Ошибка импорта', String(e?.message ?? e));
     } finally {
-      setLoading(({ [m.id]: _, ...rest }) => rest);
+      clearLoading(m.id);
       refresh();
     }
   };
@@ -518,8 +552,19 @@ function ModelsScreen(props: { settings: Settings; onChange: (p: Partial<Setting
               {m.description} ~{m.sizeMb >= 1000 ? `${(m.sizeMb / 1000).toFixed(1)} ГБ` : `${m.sizeMb} МБ`}
             </Text>
             <View style={styles.row}>
-              {l !== undefined ? (
-                <Text style={styles.cardMeta}>{l < 0 ? 'Копирование…' : `Загрузка ${Math.round(l * 100)}%`}</Text>
+              {l ? (
+                <>
+                  <Text style={styles.cardMeta}>
+                    {l.copying
+                      ? 'Копирование…'
+                      : `${l.waiting ? 'Ожидание сети' : 'Загрузка'} ${Math.round(l.fraction * 100)}%`}
+                  </Text>
+                  {!l.copying && (
+                    <Pressable onPress={() => cancelDownload(m)} hitSlop={8}>
+                      <Text style={[styles.link, { color: '#c0392b' }]}>Отменить</Text>
+                    </Pressable>
+                  )}
+                </>
               ) : ready[m.id] ? (
                 <>
                   <Text style={[styles.cardMeta, { color: '#27ae60' }]}>Установлена</Text>
@@ -529,7 +574,7 @@ function ModelsScreen(props: { settings: Settings; onChange: (p: Partial<Setting
                 </>
               ) : (
                 <>
-                  <Pressable onPress={() => download(m)} hitSlop={8}>
+                  <Pressable onPress={() => startDownload(m)} hitSlop={8}>
                     <Text style={styles.link}>Скачать</Text>
                   </Pressable>
                   <Pressable onPress={() => importFile(m)} hitSlop={8}>
@@ -553,8 +598,9 @@ function ModelsScreen(props: { settings: Settings; onChange: (p: Partial<Setting
       </View>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Text style={styles.hint}>
-          Модели скачиваются один раз (лучше по Wi‑Fi). После этого запись, расшифровка и резюме работают без
-          интернета. Можно также скопировать файл модели с компьютера и выбрать его через «Из файла».
+          Модели скачиваются один раз (лучше по Wi‑Fi). Загрузка идёт в фоне и продолжается после обрыва связи,
+          её видно в шторке. После этого запись, расшифровка и резюме работают без интернета. Можно также
+          скопировать файл модели с компьютера и выбрать его через «Из файла».
         </Text>
         {section('whisper', 'Расшифровка речи', 'whisperModelId')}
         {section('llm', 'Резюме', 'llmModelId')}
