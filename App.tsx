@@ -6,6 +6,7 @@ import {
   Alert,
   AppState,
   BackHandler,
+  Linking,
   FlatList,
   Permission,
   PermissionsAndroid,
@@ -20,7 +21,8 @@ import {
   View,
 } from 'react-native';
 import { getRecorderStatus, startRecording, stopRecording } from './modules/meeting-recorder/src';
-import { summarize, transcribe } from './src/ai';
+import { summarize, summarizeInCloud, transcribe } from './src/ai';
+import { GIGACHAT_MODELS, OfflineError, getAuthKey, setAuthKey } from './src/cloud';
 import {
   MODELS,
   ModelInfo,
@@ -164,9 +166,11 @@ export default function App() {
       if (!meeting) return;
       const wModel = getModel(settings.whisperModelId);
       const lModel = getModel(settings.llmModelId);
+      const useCloud = settings.summaryMode === 'cloud' && !!(await getAuthKey());
+      const localReady = await isModelReady(lModel);
       const missing = [];
       if (!meeting.transcript && !(await isModelReady(wModel))) missing.push(wModel.name);
-      if (!(await isModelReady(lModel))) missing.push(lModel.name);
+      if (!useCloud && !localReady) missing.push(`${lModel.name} или ключ GigaChat`);
       if (missing.length) {
         Alert.alert('Нужны модели', `Скачайте или импортируйте: ${missing.join(', ')}`, [
           { text: 'Отмена', style: 'cancel' },
@@ -189,7 +193,16 @@ export default function App() {
           await patchMeeting(id, { transcript });
         }
         await patchMeeting(id, { status: 'summarizing', error: undefined });
-        const summary = await summarize(transcript, lModel, setP);
+        let summary: string | undefined;
+        if (useCloud) {
+          try {
+            summary = await summarizeInCloud(transcript, settings.cloudModel, setP);
+          } catch (e) {
+            // No internet: fall back to the model on the phone if it is installed.
+            if (!(e instanceof OfflineError) || !localReady) throw e;
+          }
+        }
+        summary ??= await summarize(transcript, lModel, setP);
         await patchMeeting(id, { summary, status: 'done' });
       } catch (e: any) {
         await patchMeeting(id, { status: 'error', error: String(e?.message ?? e) });
@@ -285,7 +298,7 @@ export default function App() {
         <View style={styles.header}>
           <Text style={styles.title}>Ассистент встреч</Text>
           <Pressable onPress={() => setScreen({ name: 'models' })} hitSlop={12}>
-            <Text style={styles.link}>Модели</Text>
+            <Text style={styles.link}>Настройки</Text>
           </Pressable>
         </View>
 
@@ -470,6 +483,87 @@ function SummaryView({ text, onChange }: { text: string; onChange: (text: string
   );
 }
 
+function CloudSettings(props: { settings: Settings; onChange: (p: Partial<Settings>) => void }) {
+  const { settings } = props;
+  const [key, setKey] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getAuthKey().then((k) => {
+      setKey(k);
+      setSaved(!!k);
+    });
+  }, []);
+
+  const save = async () => {
+    await setAuthKey(key);
+    setSaved(!!key.trim());
+  };
+
+  return (
+    <View style={{ marginBottom: 24 }}>
+      <Text style={styles.section}>Резюме через интернет</Text>
+      <View style={styles.row}>
+        {(['cloud', 'local'] as const).map((mode) => (
+          <Pressable
+            key={mode}
+            onPress={() => props.onChange({ summaryMode: mode })}
+            style={[styles.tab, settings.summaryMode === mode && styles.tabActive]}
+          >
+            <Text style={[styles.tabText, settings.summaryMode === mode && styles.tabTextActive]}>
+              {mode === 'cloud' ? 'GigaChat, если есть интернет' : 'Только на телефоне'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {settings.summaryMode === 'cloud' && (
+        <View style={[styles.card, { marginTop: 12 }]}>
+          <Text style={styles.cardMeta}>
+            Текст расшифровки отправляется в GigaChat (Сбер), запись звука остаётся на телефоне. Без интернета
+            резюме сделает модель на телефоне, если она скачана.
+          </Text>
+          <Text style={[styles.cardTitle, { marginTop: 12 }]}>Ключ авторизации GigaChat API</Text>
+          <TextInput
+            style={styles.keyInput}
+            value={key}
+            onChangeText={(t) => {
+              setKey(t);
+              setSaved(false);
+            }}
+            placeholder="Вставьте ключ из личного кабинета"
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <View style={styles.row}>
+            <Pressable onPress={save} hitSlop={8}>
+              <Text style={styles.link}>{saved ? 'Сохранено ✓' : 'Сохранить'}</Text>
+            </Pressable>
+            <Pressable onPress={() => Linking.openURL('https://developers.sber.ru/studio/workspaces')} hitSlop={8}>
+              <Text style={styles.link}>Где взять ключ</Text>
+            </Pressable>
+          </View>
+          <Text style={[styles.cardTitle, { marginTop: 12 }]}>Модель</Text>
+          <View style={styles.row}>
+            {GIGACHAT_MODELS.map((m) => (
+              <Pressable
+                key={m.id}
+                onPress={() => props.onChange({ cloudModel: m.id })}
+                style={[styles.tab, settings.cloudModel === m.id && styles.tabActive]}
+              >
+                <Text style={[styles.tabText, settings.cloudModel === m.id && styles.tabTextActive]}>{m.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.cardMeta}>
+            {GIGACHAT_MODELS.find((m) => m.id === settings.cloudModel)?.description}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 function ModelsScreen(props: { settings: Settings; onChange: (p: Partial<Settings>) => void; onBack: () => void }) {
   const { settings } = props;
   const [ready, setReady] = useState<Record<string, boolean>>({});
@@ -598,12 +692,18 @@ function ModelsScreen(props: { settings: Settings; onChange: (p: Partial<Setting
       </View>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Text style={styles.hint}>
-          Модели скачиваются один раз (лучше по Wi‑Fi). Загрузка идёт в фоне и продолжается после обрыва связи,
+          Для резюме можно ничего не скачивать: если есть интернет, его сделает GigaChat. Модели на телефон
+          скачиваются один раз (лучше по Wi‑Fi). Загрузка идёт в фоне и продолжается после обрыва связи,
           её видно в шторке. После этого запись, расшифровка и резюме работают без интернета. Можно также
           скопировать файл модели с компьютера и выбрать его через «Из файла».
         </Text>
         {section('whisper', 'Расшифровка речи', 'whisperModelId')}
-        {section('llm', 'Резюме', 'llmModelId')}
+        <CloudSettings settings={settings} onChange={props.onChange} />
+        {section(
+          'llm',
+          settings.summaryMode === 'cloud' ? 'Резюме без интернета (необязательно)' : 'Резюме на телефоне',
+          'llmModelId',
+        )}
         <Text style={styles.section}>Язык встреч</Text>
         <View style={styles.row}>
           {(['ru', 'auto'] as const).map((lang) => (
@@ -660,6 +760,16 @@ const styles = StyleSheet.create({
   cardMeta: { marginTop: 4, fontSize: 14, color: '#6b7280' },
   row: { flexDirection: 'row', gap: 20, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' },
   section: { fontSize: 13, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', marginBottom: 8 },
+  keyInput: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 15,
+    color: '#111',
+  },
   titleInput: { fontSize: 22, fontWeight: '700', color: '#111', marginHorizontal: 16, paddingVertical: 4 },
   meta: { marginHorizontal: 16, color: '#6b7280', fontSize: 14 },
   error: { marginHorizontal: 16, marginTop: 8, color: '#c0392b' },

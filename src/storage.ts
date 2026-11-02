@@ -19,6 +19,9 @@ export type Settings = {
   whisperModelId: string;
   llmModelId: string;
   language: 'ru' | 'auto';
+  /** cloud: GigaChat when online, the local model otherwise; local: always on the phone. */
+  summaryMode: 'cloud' | 'local';
+  cloudModel: string;
 };
 
 const MEETINGS_KEY = 'meetings.v1';
@@ -31,6 +34,8 @@ export const DEFAULT_SETTINGS: Settings = {
   whisperModelId: 'whisper-small',
   llmModelId: 'qwen3-4b',
   language: 'ru',
+  summaryMode: 'cloud',
+  cloudModel: 'GigaChat-2-Pro',
 };
 
 export async function loadMeetings(): Promise<Meeting[]> {

@@ -42,3 +42,6 @@ yarn-error.*
 
 # generated native folders (created by expo prebuild)
 /android
+
+# fetched during the build
+/certs

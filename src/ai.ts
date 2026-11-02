@@ -1,5 +1,6 @@
 import { initLlama } from 'llama.rn';
 import { initWhisper } from 'whisper.rn';
+import { gigachatAsk } from './cloud';
 import { ModelInfo, resolveModelPath } from './models';
 
 async function requirePath(m: ModelInfo) {
@@ -56,8 +57,12 @@ const FINAL_PROMPT = `Составь итог встречи в таком фо�
 - что осталось нерешённым или требует уточнения`;
 
 // About 3 characters per token for Russian text: chunks stay well inside the context window.
-const CHUNK_CHARS = 9000;
+const LOCAL_CHUNK_CHARS = 9000;
+// GigaChat has a 128K-token context, so almost any meeting fits in one request.
+const CLOUD_CHUNK_CHARS = 200_000;
 const N_CTX = 8192;
+
+type Ask = (user: string, maxTokens: number) => Promise<string>;
 
 function splitText(text: string, size: number): string[] {
   const chunks: string[] = [];
@@ -74,9 +79,47 @@ function splitText(text: string, size: number): string[] {
 }
 
 /**
- * Summary with a local LLM. Long meetings are summarised in parts first
- * and the notes are then merged into one final summary.
+ * Long meetings are summarised in parts first and the notes are then merged
+ * into one final summary.
  */
+async function summarizeWith(ask: Ask, chunkChars: number, transcript: string, onProgress: (label: string) => void) {
+  const chunks = splitText(transcript, chunkChars);
+  if (chunks.length === 1) {
+    onProgress('Составляю резюме…');
+    return await ask(`Расшифровка встречи:\n\n${transcript}\n\n${FINAL_PROMPT}`, 1500);
+  }
+
+  const notes: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    onProgress(`Разбираю часть ${i + 1} из ${chunks.length}…`);
+    notes.push(
+      await ask(
+        `Фрагмент ${i + 1} из ${chunks.length} расшифровки встречи:\n\n${chunks[i]}\n\n` +
+          'Выпиши кратким списком: обсуждённые темы, принятые решения, задачи (кто, что, срок) и открытые вопросы. ' +
+          'Сохрани имена, цифры и даты.',
+        600,
+      ),
+    );
+  }
+
+  onProgress('Собираю итоговое резюме…');
+  // If the notes themselves are too long, keep compressing them pairwise.
+  let merged = notes;
+  while (merged.join('\n').length > chunkChars && merged.length > 1) {
+    const next: string[] = [];
+    for (let i = 0; i < merged.length; i += 2) {
+      const pair = merged.slice(i, i + 2).join('\n\n');
+      next.push(
+        merged.length - i === 1 ? pair : await ask(`Объедини заметки по встрече, убрав повторы:\n\n${pair}`, 700),
+      );
+    }
+    merged = next;
+  }
+  const all = merged.map((n, i) => `### Заметки ${i + 1}\n${n}`).join('\n\n');
+  return await ask(`Заметки по частям одной встречи:\n\n${all}\n\n${FINAL_PROMPT}`, 1500);
+}
+
+/** Summary with a local LLM on the phone. */
 export async function summarize(
   transcript: string,
   model: ModelInfo,
@@ -91,7 +134,7 @@ export async function summarize(
     use_mlock: false,
   });
 
-  const ask = async (user: string, maxTokens: number) => {
+  const ask: Ask = async (user, maxTokens) => {
     const res = await ctx.completion({
       messages: [
         { role: 'system', content: SYSTEM },
@@ -107,43 +150,14 @@ export async function summarize(
   };
 
   try {
-    const chunks = splitText(transcript, CHUNK_CHARS);
-    if (chunks.length === 1) {
-      onProgress('Составляю резюме…');
-      return await ask(`Расшифровка встречи:\n\n${transcript}\n\n${FINAL_PROMPT}`, 1200);
-    }
-
-    const notes: string[] = [];
-    for (let i = 0; i < chunks.length; i++) {
-      onProgress(`Разбираю часть ${i + 1} из ${chunks.length}…`);
-      notes.push(
-        await ask(
-          `Фрагмент ${i + 1} из ${chunks.length} расшифровки встречи:\n\n${chunks[i]}\n\n` +
-            'Выпиши кратким списком: обсуждённые темы, принятые решения, задачи (кто, что, срок) и открытые вопросы. ' +
-            'Сохрани имена, цифры и даты.',
-          600,
-        ),
-      );
-    }
-
-    onProgress('Собираю итоговое резюме…');
-    // If the notes themselves are too long, keep compressing them pairwise.
-    let merged = notes;
-    while (merged.join('\n').length > CHUNK_CHARS && merged.length > 1) {
-      const next: string[] = [];
-      for (let i = 0; i < merged.length; i += 2) {
-        const pair = merged.slice(i, i + 2).join('\n\n');
-        next.push(
-          merged.length - i === 1
-            ? pair
-            : await ask(`Объедини заметки по встрече, убрав повторы:\n\n${pair}`, 700),
-        );
-      }
-      merged = next;
-    }
-    const all = merged.map((n, i) => `### Заметки ${i + 1}\n${n}`).join('\n\n');
-    return await ask(`Заметки по частям одной встречи:\n\n${all}\n\n${FINAL_PROMPT}`, 1200);
+    return await summarizeWith(ask, LOCAL_CHUNK_CHARS, transcript, onProgress);
   } finally {
     await ctx.release();
   }
+}
+
+/** Summary through the GigaChat API; throws OfflineError when there is no connection. */
+export async function summarizeInCloud(transcript: string, model: string, onProgress: (label: string) => void) {
+  const ask: Ask = (user, maxTokens) => gigachatAsk(model, SYSTEM, user, maxTokens);
+  return summarizeWith(ask, CLOUD_CHUNK_CHARS, transcript, (label) => onProgress(`GigaChat: ${label}`));
 }

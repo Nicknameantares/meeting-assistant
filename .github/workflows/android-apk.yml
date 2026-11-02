@@ -32,6 +32,14 @@ jobs:
 
       - run: npx tsc --noEmit
 
+      - name: Fetch the Russian Trusted Root CA for GigaChat API
+        run: |
+          mkdir -p certs
+          curl -fsSL --retry 3 https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt -o certs/russian_trusted_root_ca.pem
+          fp=$(openssl x509 -in certs/russian_trusted_root_ca.pem -noout -fingerprint -sha256 | cut -d= -f2)
+          # Fingerprint published at https://developers.sber.ru/docs/en/smarthome/c2c/ca
+          test "$fp" = "D2:6D:2D:02:31:B7:C3:9F:92:CC:73:85:12:BA:54:10:35:19:E4:40:5D:68:B5:BD:70:3E:97:88:CA:8E:CF:31"
+
       - name: Generate native Android project
         run: npx expo prebuild --platform android --no-install
 

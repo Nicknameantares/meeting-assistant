@@ -24,7 +24,8 @@
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
-      "llama.rn"
+      "llama.rn",
+      "./plugins/withRussianTrustedCA"
     ]
   }
 }
