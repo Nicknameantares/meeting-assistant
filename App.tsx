@@ -260,6 +260,7 @@ export default function App() {
           await patchMeeting(m.id, { summary: undefined });
           process(m.id);
         }}
+        onEditSummary={(summary) => patchMeeting(m.id, { summary })}
         onDelete={() => deleteMeeting(m)}
       />
     ) : null;
@@ -330,6 +331,7 @@ function MeetingScreen(props: {
   onRename: (t: string) => void;
   onProcess: () => void;
   onResummarize: () => void;
+  onEditSummary: (summary: string) => void;
   onDelete: () => void;
 }) {
   const { meeting: m, progress } = props;
@@ -380,9 +382,13 @@ function MeetingScreen(props: {
         ))}
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
-        <Text selectable style={styles.body}>
-          {(tab === 'summary' ? m.summary : m.transcript) ?? 'Пока пусто.'}
-        </Text>
+        {tab === 'summary' && m.summary ? (
+          <SummaryView text={m.summary} onChange={props.onEditSummary} />
+        ) : (
+          <Text selectable style={styles.body}>
+            {(tab === 'summary' ? m.summary : m.transcript) ?? 'Пока пусто.'}
+          </Text>
+        )}
       </ScrollView>
       <View style={styles.bottomRow}>
         <Pressable style={styles.secondaryBtn} onPress={share}>
@@ -390,10 +396,65 @@ function MeetingScreen(props: {
         </Pressable>
         {m.status === 'done' && (
           <Pressable style={styles.secondaryBtn} onPress={props.onResummarize}>
-            <Text style={styles.secondaryBtnText}>Пересоставить резюме</Text>
+            <Text style={styles.secondaryBtnText}>Новое резюме</Text>
           </Pressable>
         )}
       </View>
+    </View>
+  );
+}
+
+/** Renders the model's Markdown-like summary: headings, bullets and tappable task checkboxes. */
+function SummaryView({ text, onChange }: { text: string; onChange: (text: string) => void }) {
+  const lines = text.split('\n');
+  const inline = (t: string) => t.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+
+  const toggle = (i: number) => {
+    const next = [...lines];
+    next[i] = /\[ \]/.test(next[i]) ? next[i].replace('[ ]', '[x]') : next[i].replace(/\[[xX]\]/, '[ ]');
+    onChange(next.join('\n'));
+  };
+
+  return (
+    <View>
+      {lines.map((raw, i) => {
+        const line = raw.trim();
+        if (!line) return null;
+        const heading = line.match(/^#{1,6}\s+(.*)$/);
+        if (heading) {
+          return (
+            <Text key={i} style={[styles.mdHeading, i === 0 && { marginTop: 0 }]}>
+              {inline(heading[1])}
+            </Text>
+          );
+        }
+        const task = line.match(/^[-*]\s+\[( |x|X)\]\s*(.*)$/);
+        if (task) {
+          const done = task[1] !== ' ';
+          return (
+            <Pressable key={i} style={styles.mdRow} onPress={() => toggle(i)} hitSlop={4}>
+              <View style={[styles.checkbox, done && styles.checkboxDone]}>
+                {done && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+              <Text style={[styles.mdText, done && styles.mdDone]}>{inline(task[2])}</Text>
+            </Pressable>
+          );
+        }
+        const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+        if (bullet) {
+          return (
+            <View key={i} style={styles.mdRow}>
+              <Text style={styles.mdBullet}>•</Text>
+              <Text selectable style={styles.mdText}>{inline(bullet[1])}</Text>
+            </View>
+          );
+        }
+        return (
+          <Text key={i} selectable style={[styles.body, { marginBottom: 6 }]}>
+            {inline(line)}
+          </Text>
+        );
+      })}
     </View>
   );
 }
@@ -565,6 +626,23 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#fff' },
   body: { fontSize: 16, lineHeight: 24, color: '#111' },
   bottomRow: { flexDirection: 'row', gap: 10, padding: 16 },
-  secondaryBtn: { flex: 1, borderRadius: 12, padding: 12, alignItems: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' },
+  mdHeading: { fontSize: 18, fontWeight: '700', color: '#111', marginTop: 18, marginBottom: 8 },
+  mdRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
+  mdBullet: { fontSize: 16, lineHeight: 24, color: '#6b7280', width: 12 },
+  mdText: { flex: 1, fontSize: 16, lineHeight: 24, color: '#111' },
+  mdDone: { color: '#9ca3af', textDecorationLine: 'line-through' },
+  checkbox: {
+    width: 22,
+    height: 22,
+    marginTop: 1,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxDone: { backgroundColor: '#2563eb' },
+  checkmark: { color: '#fff', fontSize: 14, fontWeight: '700', lineHeight: 16 },
+  secondaryBtn: { flex: 1, borderRadius: 12, padding: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' },
   secondaryBtnText: { color: '#111', fontWeight: '600' },
 });
