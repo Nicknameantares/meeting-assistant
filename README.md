@@ -7,8 +7,8 @@
 
 ## Как поставить
 
-1. Откройте вкладку **Actions** в этом репозитории, выберите последний запуск «Build Android APK»
-   и скачайте артефакт `meeting-assistant-apk` (zip с APK внутри).
+1. Скачайте `meeting-assistant.apk` из последнего релиза:
+   https://github.com/Nicknameantares/meeting-assistant/releases/latest
 2. Перекиньте APK на телефон и установите (разрешите установку из неизвестных источников).
 3. В приложении нажмите **Модели** и скачайте по Wi‑Fi:
    - Whisper Small (~190 МБ) для расшифровки;

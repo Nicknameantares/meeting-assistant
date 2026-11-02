@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,3 +43,13 @@ jobs:
         with:
           name: meeting-assistant-apk
           path: android/app/build/outputs/apk/release/*.apk
+
+      - name: Publish APK as a release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk meeting-assistant.apk
+          tag="build-${{ github.run_number }}"
+          gh release create "$tag" meeting-assistant.apk --target "${{ github.sha }}" \
+            --title "Сборка ${{ github.run_number }}" --notes "APK для Android (arm64)." --latest
